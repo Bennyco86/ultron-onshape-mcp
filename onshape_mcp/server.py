@@ -46,7 +46,6 @@ from .api.rendering import (
     compose_reference_comparison,
     crop_cached_image,
     get_image,
-    get_image_meta,
     list_cached_image_ids,
     load_local_image,
     _put_image,
@@ -3669,7 +3668,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                     "create_document: post-create workspace/elementId resolution failed"
                 )
 
-            payload: Dict[str, Any] = {
+            payload: dict[str, Any] = {
                 "ok": True,
                 "document_id": doc.id,
                 "document_name": doc.name,
@@ -4625,9 +4624,10 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 rendered = format_notices(notices)
                 if rendered:
                     prefix = f"NOTICES ({len(notices)}):\n{rendered}\n\n"
+            result_json = json.dumps(result, separators=(",", ":"), default=str)
             return [TextContent(
                 type="text",
-                text=f"{prefix}FeatureScript result:\n{json.dumps(result, separators=(",", ":"), default=str)}",
+                text=f"{prefix}FeatureScript result:\n{result_json}",
             )]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=f"Error evaluating FeatureScript: API returned {e.response.status_code}.")]
@@ -4641,7 +4641,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 workspace_id=arguments["workspaceId"],
                 element_id=arguments["elementId"],
             )
-            return [TextContent(type="text", text=f"Bounding box:\n{json.dumps(result, separators=(",", ":"), default=str)}")]
+            bbox_json = json.dumps(result, separators=(",", ":"), default=str)
+            return [TextContent(type="text", text=f"Bounding box:\n{bbox_json}")]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=f"Error getting bounding box: API returned {e.response.status_code}.")]
         except Exception as e:
