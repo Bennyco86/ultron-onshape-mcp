@@ -40,7 +40,14 @@ NAMED_VIEWS = {
     "right": "right",
 }
 
-DEFAULT_VIEWS = ("iso", "top", "front", "right")
+# 3 views x 1024x680 ≈ 2,790 vision tokens per render bundle, vs ~5,120 for
+# the old 4 x 1200x800 default — and describe fires after every mutation, so
+# the default IS the session budget. Ask for more views / bigger renders
+# explicitly when a part is asymmetric or a detail is ambiguous; crop_image
+# covers zoom-ins without a full re-render.
+DEFAULT_VIEWS = ("iso", "top", "front")
+DEFAULT_RENDER_WIDTH = 1024
+DEFAULT_RENDER_HEIGHT = 680
 
 
 ViewName = Literal["iso", "isometric", "front", "back", "top", "bottom", "left", "right"]
@@ -140,8 +147,8 @@ class ShadedViewManager:
         workspace_id: str,
         element_id: str,
         views: List[str] = None,
-        width: int = 1200,
-        height: int = 800,
+        width: int = DEFAULT_RENDER_WIDTH,
+        height: int = DEFAULT_RENDER_HEIGHT,
         pixel_size: float = 0.0,
         edges: bool = True,
     ) -> List[RenderedView]:
@@ -150,9 +157,9 @@ class ShadedViewManager:
         Args:
             views: list of named views ("iso", "top", "front", "back", "left",
                 "right", "bottom") or raw comma-separated 12-float matrices.
-                Defaults to ["iso", "top", "front", "right"].
-            width/height: output pixel dimensions. 1200x800 returns in ~500ms
-                per view. Opus 4.7 accepts up to 2576px long-edge natively.
+                Defaults to DEFAULT_VIEWS.
+            width/height: output pixel dimensions. Default keeps the vision-
+                token bill low; bump toward 1600x1000 for fine detail passes.
             pixel_size: 0.0 lets Onshape auto-fit.
             edges: include silhouette/feature edges in the render.
         """
@@ -176,8 +183,8 @@ class ShadedViewManager:
         workspace_id: str,
         element_id: str,
         views: List[str] = None,
-        width: int = 1200,
-        height: int = 800,
+        width: int = DEFAULT_RENDER_WIDTH,
+        height: int = DEFAULT_RENDER_HEIGHT,
         pixel_size: float = 0.0,
         edges: bool = True,
     ) -> List[RenderedView]:

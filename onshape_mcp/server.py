@@ -57,7 +57,11 @@ from .builders.chamfer import ChamferBuilder, ChamferType
 from .builders.shell import ShellBuilder
 from .builders.offset_plane import OffsetPlaneBuilder
 from .builders.revolve import RevolveBuilder, RevolveType
-from .builders.pattern import LinearPatternBuilder, CircularPatternBuilder
+from .builders.pattern import (
+    LinearPatternBuilder,
+    CircularPatternBuilder,
+    build_circular_pattern_fs,
+)
 from .builders.boolean import BooleanBuilder, BooleanType
 from .analysis.interference import check_assembly_interference, format_interference_result
 from .analysis.positioning import get_assembly_positions, set_absolute_position, align_to_face
@@ -1539,8 +1543,28 @@ async def list_tools() -> list[Tool]:
                     "axis": {
                         "type": "string",
                         "enum": ["X", "Y", "Z"],
-                        "description": "Axis of revolution",
+                        "description": "Axis of revolution (datum-plane pick; broken on current Onshape — prefer axisEdgeId)",
                         "default": "Y",
+                    },
+                    "axisEdgeId": {
+                        "type": "string",
+                        "description": (
+                            "Deterministic id of an edge to revolve around (e.g. a sketch "
+                            "line drawn on the desired axis; get it from list_entities). "
+                            "Takes precedence over `axis`. The named-axis pick fails with "
+                            "REVOLVE_SELECT_AXIS on current Onshape, so pass this."
+                        ),
+                    },
+                    "axisQueryString": {
+                        "type": "string",
+                        "description": (
+                            "FeatureScript query string selecting the axis edge, for when "
+                            "no deterministic id exists yet (sketch-only studio). Example: "
+                            "'query = qContainsPoint(qCreatedBy(id + \"<sketchFid>\", "
+                            "EntityType.EDGE), vector(0, 0, 19) * millimeter);' — picks the "
+                            "sketch line passing through that world point. Precedence: "
+                            "axisEdgeId > axisQueryString > axis."
+                        ),
                     },
                     "angle": {"type": "number", "description": "Revolve angle in degrees", "default": 360},
                     "operationType": {
@@ -1597,7 +1621,15 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="create_circular_pattern",
-            description="Create a circular pattern of features around an axis",
+            description=(
+                "Create a circular pattern of the bodies created by the given features. "
+                "Two axis modes: `axis` (X/Y/Z world axis through the origin — implemented "
+                "as an FS opPattern feature; the patterned instances are NEW bodies, so "
+                "follow with create_boolean UNION if you want one part) or `axisEdgeId` "
+                "(a real model edge, e.g. a cylinder edge from list_entities — uses the "
+                "native feature-pattern). Seed features must CREATE bodies (operation NEW) "
+                "for the axis mode."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1610,13 +1642,20 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "Feature IDs to pattern",
                     },
-                    "count": {"type": "integer", "description": "Total number of instances"},
+                    "count": {"type": "integer", "description": "Total number of instances including the seed"},
                     "angle": {"type": "number", "description": "Total angle spread in degrees", "default": 360},
                     "axis": {
                         "type": "string",
                         "enum": ["X", "Y", "Z"],
-                        "description": "Pattern axis",
+                        "description": "World rotation axis through the origin (FS opPattern path)",
                         "default": "Z",
+                    },
+                    "axisEdgeId": {
+                        "type": "string",
+                        "description": (
+                            "Deterministic edge ID to rotate around (native pattern path). "
+                            "Takes precedence over `axis` when set."
+                        ),
                     },
                 },
                 "required": ["documentId", "workspaceId", "elementId", "featureIds", "count"],
@@ -1865,9 +1904,10 @@ async def list_tools() -> list[Tool]:
                 "Render one or more shaded views of a Part Studio and return the PNGs so "
                 "Claude can actually see the 3D result. Use this after every feature that "
                 "creates or modifies visible geometry. The returned image_ids can be passed "
-                "to crop_image to zoom into suspicious regions. Claude Opus 4.7 spatial "
+                "to crop_image to zoom into suspicious regions. Claude spatial "
                 "reasoning is weak — always render the view you need rather than mentally "
-                "rotating. Default views: iso, top, front, right."
+                "rotating. Default views: iso, top, front (add right/back/bottom "
+                "explicitly for asymmetric parts)."
             ),
             inputSchema={
                 "type": "object",
@@ -1882,10 +1922,10 @@ async def list_tools() -> list[Tool]:
                             "List of named views (iso, top, front, back, left, right, bottom) "
                             "or raw comma-separated 12-float viewMatrix strings."
                         ),
-                        "default": ["iso", "top", "front", "right"],
+                        "default": ["iso", "top", "front"],
                     },
-                    "width": {"type": "integer", "default": 1200, "description": "Output width in pixels"},
-                    "height": {"type": "integer", "default": 800, "description": "Output height in pixels"},
+                    "width": {"type": "integer", "default": 1024, "description": "Output width in pixels"},
+                    "height": {"type": "integer", "default": 680, "description": "Output height in pixels"},
                     "edges": {"type": "boolean", "default": True, "description": "Render feature/silhouette edges"},
                 },
                 "required": ["documentId", "workspaceId", "elementId"],
@@ -1905,10 +1945,10 @@ async def list_tools() -> list[Tool]:
                     "views": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "default": ["iso", "top", "front", "right"],
+                        "default": ["iso", "top", "front"],
                     },
-                    "width": {"type": "integer", "default": 1200},
-                    "height": {"type": "integer", "default": 800},
+                    "width": {"type": "integer", "default": 1024},
+                    "height": {"type": "integer", "default": 680},
                     "edges": {"type": "boolean", "default": True},
                 },
                 "required": ["documentId", "workspaceId", "elementId"],
@@ -2108,13 +2148,15 @@ async def list_tools() -> list[Tool]:
             description=(
                 "One-shot snapshot of a Part Studio's entire design state. Returns BOTH a "
                 "structured text representation (feature tree with statuses, body topology "
-                "with every face and edge classified by type + deterministic ID + "
-                "coordinates, bounding box, mass properties) AND the multi-view rendered "
-                "images (iso/top/front/right by default). Use this INSTEAD OF chaining "
+                "summary — largest planar faces by area + representatives per curved type, "
+                "with deterministic IDs — bounding box, mass properties) AND multi-view "
+                "rendered images (iso/top/front by default). Use this INSTEAD OF chaining "
                 "get_features + list_entities + render_part_studio_views + get_mass_properties "
                 "after every mutation. The text is what you reason over (reliable for you). "
                 "The images catch visual regressions the text misses. Image_ids returned "
-                "in the text can be cropped via crop_image."
+                "in the text can be cropped via crop_image. Topology text omits small faces "
+                "by default — pass verboseTopology=true (or use list_entities with filters) "
+                "when you need every face."
             ),
             inputSchema={
                 "type": "object",
@@ -2125,11 +2167,16 @@ async def list_tools() -> list[Tool]:
                     "views": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "default": ["iso", "top", "front", "right"],
+                        "default": ["iso", "top", "front"],
                         "description": "Named views to render (iso/top/front/back/left/right/bottom).",
                     },
-                    "renderWidth": {"type": "integer", "default": 1200},
-                    "renderHeight": {"type": "integer", "default": 800},
+                    "renderWidth": {"type": "integer", "default": 1024},
+                    "renderHeight": {"type": "integer", "default": 680},
+                    "verboseTopology": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "List every face of every body instead of the capped summary.",
+                    },
                 },
                 "required": ["documentId", "workspaceId", "elementId"],
             },
@@ -2501,7 +2548,7 @@ def _feature_apply_json(
     hints_list = list(hints) if hints else _hints_for_result(result)
     if hints_list:
         payload["hints"] = hints_list
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, separators=(",", ":"), default=str)
 
 
 # Standard datum plane deterministic ids. Anything else in a sketch's
@@ -2619,7 +2666,7 @@ def _exception_json(
     ]
     if hints_list:
         payload["hints"] = hints_list
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, separators=(",", ":"), default=str)
 
 
 def _enrich_rectangular_body(
@@ -3148,7 +3195,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None,
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -3204,7 +3251,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None,
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -3659,7 +3706,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None,
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
             logger.error(f"API error deleting document: {status_code}")
@@ -3669,7 +3716,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "document_id": arguments["documentId"],
                 "error_message": f"HTTP {status_code}: {e}",
                 "tool": name,
-            }, indent=2))]
+            }, separators=(",", ":"), default=str))]
         except Exception as e:
             logger.exception("Unexpected error deleting document")
             return [TextContent(type="text", text=json.dumps({
@@ -3678,7 +3725,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "document_id": arguments["documentId"],
                 "error_message": str(e),
                 "tool": name,
-            }, indent=2))]
+            }, separators=(",", ":"), default=str))]
 
     elif name == "create_part_studio":
         try:
@@ -3719,7 +3766,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "other_part_studios": other_part_studios,
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             logger.error(f"API error creating Part Studio: {e.response.status_code}")
             return [TextContent(type="text", text=json.dumps({
@@ -3730,7 +3777,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "other_part_studios": [],
                 "error_message": f"HTTP {e.response.status_code}: {e}",
                 "tool": name,
-            }, indent=2))]
+            }, separators=(",", ":"), default=str))]
         except Exception as e:
             logger.exception("Unexpected error creating Part Studio")
             return [TextContent(type="text", text=json.dumps({
@@ -3741,7 +3788,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "other_part_studios": [],
                 "error_message": str(e),
                 "tool": name,
-            }, indent=2))]
+            }, separators=(",", ":"), default=str))]
 
     elif name == "create_assembly":
         try:
@@ -3759,7 +3806,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None if element_id else "API did not return an element id",
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -3803,7 +3850,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None if instance_id else "Could not diff-identify the new instance",
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -3834,7 +3881,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None,
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -4167,7 +4214,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
             # (SKETCH_DIMENSION_MISSING_PARAMETER etc.) still fires on
             # this path.
             payload["hints"] = _hints_for_result(apply)
-            return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -4206,7 +4253,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                     sketch_feature_id=arguments.get("sketchFeatureId"),
                     sketch_name=arguments.get("sketchName"),
                 )
-            return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -4293,7 +4340,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "sketches": sketches,
                 "text": "\n".join(lines) if sketches else "SKETCHES: none",
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -4420,6 +4467,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 axis=arguments.get("axis", "Y"),
                 angle=arguments.get("angle", 360.0),
                 operation_type=op_type,
+                axis_edge_id=arguments.get("axisEdgeId"),
+                axis_query_string=arguments.get("axisQueryString"),
             )
             result = await apply_feature_and_check(
                 client,
@@ -4469,21 +4518,60 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
 
     elif name == "create_circular_pattern":
         try:
-            pattern = CircularPatternBuilder(
-                name=arguments.get("name", "Circular pattern"),
-                count=arguments["count"],
+            axis_edge_id = arguments.get("axisEdgeId")
+            if axis_edge_id:
+                # Native feature-pattern around a real model edge.
+                pattern = CircularPatternBuilder(
+                    name=arguments.get("name", "Circular pattern"),
+                    count=arguments["count"],
+                )
+                pattern.set_angle(arguments.get("angle", 360.0))
+                pattern.set_axis_edge(axis_edge_id)
+                for fid in arguments["featureIds"]:
+                    pattern.add_feature(fid)
+                result = await apply_feature_and_check(
+                    client,
+                    arguments["documentId"], arguments["workspaceId"], arguments["elementId"],
+                    pattern.build(),
+                    track_changes=bool(arguments.get("trackChanges", True)),
+                )
+                return [TextContent(type="text", text=_feature_apply_json(result, tool_name=name))]
+
+            # World-axis path: the native feature's datum-axis query never
+            # resolves (datum planes have no edges), so emit an FS custom
+            # feature doing opPattern + rotationAround instead — the approach
+            # that shipped the impeller build.
+            fs_source = build_circular_pattern_fs(
+                fs_version=DEFAULT_FS_VERSION,
+                feature_type="circularPatternFS",
+                feature_ids=list(arguments["featureIds"]),
+                count=int(arguments["count"]),
+                angle_deg=float(arguments.get("angle", 360.0)),
+                axis=arguments.get("axis", "Z"),
             )
-            pattern.set_angle(arguments.get("angle", 360.0))
-            pattern.set_axis(arguments.get("axis", "Z"))
-            for fid in arguments["featureIds"]:
-                pattern.add_feature(fid)
-            result = await apply_feature_and_check(
-                client,
-                arguments["documentId"], arguments["workspaceId"], arguments["elementId"],
-                pattern.build(),
-                track_changes=bool(arguments.get("trackChanges", True)),
+            out = await custom_feature_manager.apply_featurescript_feature(
+                document_id=arguments["documentId"],
+                workspace_id=arguments["workspaceId"],
+                part_studio_element_id=arguments["elementId"],
+                feature_type="circularPatternFS",
+                feature_script=fs_source,
+                feature_name=arguments.get("name", "Circular pattern"),
             )
-            return [TextContent(type="text", text=_feature_apply_json(result, tool_name=name))]
+            apply = out["apply_result"]
+            payload = {
+                "ok": apply.ok,
+                "status": apply.status,
+                "feature_id": apply.feature_id,
+                "feature_name": apply.feature_name,
+                "error_message": apply.error_message,
+                "mode": "fs_oppattern_world_axis",
+                "hint": (
+                    "Pattern instances are NEW bodies; create_boolean UNION them "
+                    "with the seed body if you want a single part."
+                ),
+                "tool": name,
+            }
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -4539,7 +4627,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                     prefix = f"NOTICES ({len(notices)}):\n{rendered}\n\n"
             return [TextContent(
                 type="text",
-                text=f"{prefix}FeatureScript result:\n{json.dumps(result, indent=2)}",
+                text=f"{prefix}FeatureScript result:\n{json.dumps(result, separators=(",", ":"), default=str)}",
             )]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=f"Error evaluating FeatureScript: API returned {e.response.status_code}.")]
@@ -4553,7 +4641,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 workspace_id=arguments["workspaceId"],
                 element_id=arguments["elementId"],
             )
-            return [TextContent(type="text", text=f"Bounding box:\n{json.dumps(result, indent=2)}")]
+            return [TextContent(type="text", text=f"Bounding box:\n{json.dumps(result, separators=(",", ":"), default=str)}")]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=f"Error getting bounding box: API returned {e.response.status_code}.")]
         except Exception as e:
@@ -4655,7 +4743,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None,
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:
@@ -4684,7 +4772,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "error_message": None,
                 "tool": name,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except ValueError as e:
@@ -4890,8 +4978,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 workspace_id=arguments["workspaceId"],
                 element_id=arguments["elementId"],
                 views=arguments.get("views") or None,
-                width=int(arguments.get("width", 1200)),
-                height=int(arguments.get("height", 800)),
+                width=int(arguments.get("width", 1024)),
+                height=int(arguments.get("height", 680)),
                 edges=bool(arguments.get("edges", True)),
             )
             out: list[TextContent | ImageContent] = [
@@ -5112,7 +5200,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 radius_range_mm=arguments.get("radiusRangeMm"),
                 length_range_mm=arguments.get("lengthRangeMm"),
             )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+            return [TextContent(type="text", text=json.dumps(result, separators=(",", ":"), default=str))]
         except ValueError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name))]
         except httpx.HTTPStatusError as e:
@@ -5132,8 +5220,9 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 workspace_id=arguments["workspaceId"],
                 element_id=arguments["elementId"],
                 views=arguments.get("views") or None,
-                render_width=int(arguments.get("renderWidth", 1200)),
-                render_height=int(arguments.get("renderHeight", 800)),
+                render_width=int(arguments.get("renderWidth", 1024)),
+                render_height=int(arguments.get("renderHeight", 680)),
+                verbose_topology=bool(arguments.get("verboseTopology", False)),
             )
             out: list[TextContent | ImageContent] = [
                 TextContent(type="text", text=snap.structured_text)
@@ -5163,7 +5252,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 entity_a_id=arguments["entityAId"],
                 entity_b_id=arguments["entityBId"],
             )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+            return [TextContent(type="text", text=json.dumps(result, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=f"measure failed: HTTP {e.response.status_code}.")]
         except Exception as e:
@@ -5184,7 +5273,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                     workspace_id=arguments["workspaceId"],
                     element_id=arguments["elementId"],
                 )
-            return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+            return [TextContent(type="text", text=json.dumps(result, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=f"get_mass_properties failed: HTTP {e.response.status_code}.")]
         except Exception as e:
@@ -5230,7 +5319,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent | ImageConten
                 "source_microversion_id": out.get("source_microversion_id"),
                 "tool": "write_featurescript_feature",
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2, default=str))]
+            return [TextContent(type="text", text=json.dumps(payload, separators=(",", ":"), default=str))]
         except httpx.HTTPStatusError as e:
             return [TextContent(type="text", text=_exception_json(e, tool_name=name, status_code=e.response.status_code))]
         except Exception as e:

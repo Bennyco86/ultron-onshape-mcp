@@ -1,4 +1,31 @@
-# Jarvis Onshape MCP
+# Ultron Onshape MCP
+
+A performance- and reliability-focused fork of
+[jarvis-onshape-mcp](https://github.com/ReshefElisha/jarvis-onshape-mcp) by
+Reshef Elisha (MIT). All credit for the architecture, the vision workflow, and
+the original tool surface goes upstream — this fork keeps that intact and
+tunes it for faster, cheaper, real-world iteration.
+
+## What this fork changes
+
+Measured on a 90-face lofted impeller (the part this fork was tuned against):
+
+- **3.2× faster verification loop.** `describe_part_studio` went 9.3s → 2.9s:
+  the per-face tangent-plane FeatureScript probe is skipped during verification
+  (`list_entities` gained `include_frames`), and the bbox + face-area probes
+  merged into a single eval so the part regenerates once, not three times.
+- **~46% fewer tokens per verification call** (~6,300 → ~3,370): body topology
+  is summarized (largest planar faces by real area + representatives per curved
+  type, `verboseTopology=true` for the full dump), default renders are 3 views
+  @ 1024x680 instead of 4 @ 1200x800, and all tool responses use compact JSON.
+- **`create_circular_pattern` actually works.** The native axis query
+  (`qCreatedBy(makeId("FRONT"), EntityType.EDGE)`) can never resolve — datum
+  planes have no edges. World-axis patterns (axis=X/Y/Z) now auto-generate a
+  FeatureScript `opPattern` + `rotationAround` feature; a new `axisEdgeId`
+  parameter uses the native pattern when a real model edge is available.
+- **Feature-parameter compatibility fixes** against Onshape's current API
+  (e.g. `libraryRelationType: "NONE"` rejection) and a `create_revolve`
+  deterministic-edge axis option.
 
 Claude Code plugin that lets Claude drive real Onshape CAD: sketches, extrudes,
 fillets, mates, parametric iteration via Variable Studios, custom FeatureScript

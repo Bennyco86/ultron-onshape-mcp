@@ -23,6 +23,8 @@ class RevolveBuilder:
         axis: str = "Y",
         angle: float = 360.0,
         operation_type: RevolveType = RevolveType.NEW,
+        axis_edge_id: Optional[str] = None,
+        axis_query_string: Optional[str] = None,
     ):
         """Initialize revolve builder.
 
@@ -36,6 +38,8 @@ class RevolveBuilder:
         self.name = name
         self.sketch_feature_id = sketch_feature_id
         self.axis = axis
+        self.axis_edge_id = axis_edge_id
+        self.axis_query_string = axis_query_string
         self.angle = angle
         self.angle_variable: Optional[str] = None
         self.operation_type = operation_type
@@ -97,6 +101,35 @@ class RevolveBuilder:
         Returns:
             Axis query parameter dictionary
         """
+        # A deterministic edge id (e.g. a sketch line lying on the desired
+        # axis) is the only reliable axis pick: the datum-plane edge query
+        # below resolves to nothing on current Onshape (REVOLVE_SELECT_AXIS).
+        if self.axis_edge_id:
+            return {
+                "btType": "BTMParameterQueryList-148",
+                "queries": [
+                    {
+                        "btType": "BTMIndividualQuery-138",
+                        "deterministicIds": [self.axis_edge_id],
+                    }
+                ],
+                "parameterId": "axis",
+                "parameterName": "",
+            }
+        if self.axis_query_string:
+            return {
+                "btType": "BTMParameterQueryList-148",
+                "queries": [
+                    {
+                        "btType": "BTMIndividualQuery-138",
+                        "deterministicIds": [],
+                        "queryStatement": None,
+                        "queryString": self.axis_query_string,
+                    }
+                ],
+                "parameterId": "axis",
+                "parameterName": "",
+            }
         axis_map = {
             "X": "RIGHT",
             "Y": "TOP",
@@ -116,7 +149,6 @@ class RevolveBuilder:
             ],
             "parameterId": "axis",
             "parameterName": "",
-            "libraryRelationType": "NONE",
         }
 
     def build(self) -> Dict[str, Any]:
@@ -161,7 +193,6 @@ class RevolveBuilder:
                         ],
                         "parameterId": "entities",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     self._build_axis_query(),
                     {
@@ -171,7 +202,6 @@ class RevolveBuilder:
                         "value": self.operation_type.value,
                         "parameterId": "operationType",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     {
                         "btType": "BTMParameterQuantity-147",
@@ -181,14 +211,12 @@ class RevolveBuilder:
                         "expression": angle_expression,
                         "parameterId": "revolveAngle",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     {
                         "btType": "BTMParameterBoolean-144",
                         "value": self.opposite_direction,
                         "parameterId": "oppositeDirection",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                 ],
             },

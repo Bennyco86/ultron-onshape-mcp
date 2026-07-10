@@ -402,6 +402,7 @@ class EntityManager:
         at_z_tol_mm: float = 0.5,
         radius_range_mm: Optional[List[float]] = None,
         length_range_mm: Optional[List[float]] = None,
+        include_frames: bool = True,
     ) -> Dict[str, Any]:
         """Return structured, enriched entity lists for all bodies in the PS.
 
@@ -432,6 +433,12 @@ class EntityManager:
                 (circle/arc). Entities without a radius are dropped.
             length_range_mm: [min_mm, max_mm] inclusive. Edges only; faces
                 have no length field.
+            include_frames: run the evFaceTangentPlane FS probe that supplies
+                outward_axis / sketch_x_world / sketch_y_world. It forces a
+                part-studio regen and dominates wall time on FS-heavy parts
+                (~6s on a 90-face part), so callers that only need topology
+                counts and descriptions (e.g. describe_part_studio) pass
+                False and fall back to plane-defining normals.
 
         Returns: {"bodies": [{"body_id", "body_type", "faces": [...], ...}],
                  "summary": "...",
@@ -466,7 +473,7 @@ class EntityManager:
 
         face_frames: Dict[str, Dict[str, List[float]]] = (
             await self._fetch_face_frames(document_id, workspace_id, element_id)
-            if "faces" in wanted
+            if include_frames and "faces" in wanted
             else {}
         )
 

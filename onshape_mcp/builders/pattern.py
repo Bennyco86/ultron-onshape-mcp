@@ -1,9 +1,88 @@
 """Pattern feature builders for Onshape."""
 
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from ._units import parse_length
+
+
+_FS_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_./+=-]+$")
+
+
+def build_circular_pattern_fs(
+    *,
+    fs_version: str,
+    feature_type: str,
+    feature_ids: List[str],
+    count: int,
+    angle_deg: float,
+    axis: str,
+) -> str:
+    """Generate a complete FS source implementing a circular pattern via
+    opPattern + rotationAround about a world axis through the origin.
+
+    Why not the native circularPattern feature: its axisQuery path
+    (qCreatedBy(makeId("FRONT"), EntityType.EDGE)) can never resolve —
+    datum planes have no edges — and qContainsPoint query strings also
+    fail in the axis parameter context (verified live 2026-07-09, impeller
+    build). opPattern with explicit rotation transforms is the approach
+    that shipped a real part.
+
+    Semantics: patterns the BODIES created by `feature_ids` (qCreatedBy
+    body queries), so seed features must create bodies (operation NEW).
+    opPattern makes new bodies without unioning; callers boolean-union
+    afterwards when a single part is wanted.
+
+    Spacing matches native equal-spacing: full circle (angle >= 360)
+    steps angle/count; a partial arc spans it end-inclusive with
+    angle/(count-1).
+    """
+    if count < 2:
+        raise ValueError("count must be >= 2 (count includes the seed instance)")
+    if not feature_ids:
+        raise ValueError("at least one feature_id is required")
+    for fid in feature_ids:
+        if not _FS_SAFE_ID_RE.match(fid):
+            raise ValueError(f"feature id {fid!r} contains characters unsafe for FS source")
+    axis_vectors = {"X": "vector(1, 0, 0)", "Y": "vector(0, 1, 0)", "Z": "vector(0, 0, 1)"}
+    axis_vec = axis_vectors.get(axis.upper())
+    if axis_vec is None:
+        raise ValueError(f"axis must be X, Y or Z, got {axis!r}")
+
+    if angle_deg >= 360.0:
+        step = angle_deg / count
+    else:
+        step = angle_deg / (count - 1)
+
+    seed_queries = ", ".join(
+        f'qCreatedBy(makeId("{fid}"), EntityType.BODY)' for fid in feature_ids
+    )
+    return f'''FeatureScript {fs_version};
+import(path : "onshape/std/common.fs", version : "{fs_version}.0");
+
+annotation {{ "Feature Type Name" : "Circular pattern (FS)" }}
+export const {feature_type} = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {{
+    }}
+    {{
+        const seed = qUnion([{seed_queries}]);
+        const axisLine = line(vector(0, 0, 0) * meter, {axis_vec});
+        var transforms = [];
+        var names = [];
+        for (var i = 1; i < {count}; i += 1)
+        {{
+            transforms = append(transforms, rotationAround(axisLine, i * {step} * degree));
+            names = append(names, "inst" ~ i);
+        }}
+        opPattern(context, id + "pattern", {{
+            "entities" : seed,
+            "transforms" : transforms,
+            "instanceNames" : names
+        }});
+    }});
+'''
 
 
 class PatternType(Enum):
@@ -138,7 +217,6 @@ class LinearPatternBuilder:
             ],
             "parameterId": "directionQuery",
             "parameterName": "",
-            "libraryRelationType": "NONE",
         }
 
     def build(self) -> Dict[str, Any]:
@@ -180,7 +258,6 @@ class LinearPatternBuilder:
                         ],
                         "parameterId": "entities",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     self._build_direction_query(),
                     {
@@ -190,7 +267,6 @@ class LinearPatternBuilder:
                         "value": PatternType.FEATURE.value,
                         "parameterId": "patternType",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     {
                         "btType": "BTMParameterQuantity-147",
@@ -200,7 +276,6 @@ class LinearPatternBuilder:
                         "expression": distance_expression,
                         "parameterId": "distance",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     {
                         "btType": "BTMParameterQuantity-147",
@@ -210,7 +285,6 @@ class LinearPatternBuilder:
                         "expression": str(self.count),
                         "parameterId": "instanceCount",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                 ],
             },
@@ -237,6 +311,7 @@ class CircularPatternBuilder:
         self.angle_variable: Optional[str] = None
         self.feature_queries: List[str] = []
         self.axis = "Z"
+        self.axis_edge_id: Optional[str] = None
 
     def set_count(self, count: int) -> "CircularPatternBuilder":
         """Set the number of pattern instances.
@@ -288,12 +363,37 @@ class CircularPatternBuilder:
         self.axis = axis
         return self
 
+    def set_axis_edge(self, edge_id: str) -> "CircularPatternBuilder":
+        """Use a real model edge (deterministic ID) as the rotation axis.
+
+        This is the only axis form that works in the native circularPattern
+        feature — the datum-plane query path below never resolves. Get edge
+        IDs from list_entities(kinds=["edges"]).
+        """
+        self.axis_edge_id = edge_id
+        return self
+
     def _build_axis_query(self) -> Dict[str, Any]:
         """Build the rotation axis query parameter.
 
-        Returns:
-            Axis query parameter dictionary
+        With an axis edge set, emits a deterministic-ID query (works).
+        Otherwise falls back to the legacy datum-plane-edge queryString,
+        which is KNOWN BROKEN (datum planes have no edges — verified live
+        2026-07-09); callers wanting a world-axis pattern should use the FS
+        path via build_circular_pattern_fs instead.
         """
+        if self.axis_edge_id:
+            return {
+                "btType": "BTMParameterQueryList-148",
+                "queries": [
+                    {
+                        "btType": "BTMIndividualQuery-138",
+                        "deterministicIds": [self.axis_edge_id],
+                    }
+                ],
+                "parameterId": "axisQuery",
+                "parameterName": "",
+            }
         axis_map = {
             "X": "RIGHT",
             "Y": "TOP",
@@ -313,7 +413,6 @@ class CircularPatternBuilder:
             ],
             "parameterId": "axisQuery",
             "parameterName": "",
-            "libraryRelationType": "NONE",
         }
 
     def build(self) -> Dict[str, Any]:
@@ -351,7 +450,6 @@ class CircularPatternBuilder:
                         ],
                         "parameterId": "entities",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     self._build_axis_query(),
                     {
@@ -361,7 +459,6 @@ class CircularPatternBuilder:
                         "value": PatternType.FEATURE.value,
                         "parameterId": "patternType",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     {
                         "btType": "BTMParameterQuantity-147",
@@ -371,7 +468,6 @@ class CircularPatternBuilder:
                         "expression": angle_expression,
                         "parameterId": "angle",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                     {
                         "btType": "BTMParameterQuantity-147",
@@ -381,7 +477,6 @@ class CircularPatternBuilder:
                         "expression": str(self.count),
                         "parameterId": "instanceCount",
                         "parameterName": "",
-                        "libraryRelationType": "NONE",
                     },
                 ],
             },

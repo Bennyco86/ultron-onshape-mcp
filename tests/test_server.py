@@ -1923,17 +1923,50 @@ class TestFeatureTools:
 
     @pytest.mark.asyncio
     @patch("onshape_mcp.server.apply_feature_and_check")
-    async def test_create_circular_pattern_success(self, mock_apply):
+    async def test_create_circular_pattern_edge_axis_uses_native_path(self, mock_apply):
         mock_apply.return_value = _mock_apply_result(
             feature_id="cp123", feature_type="circularPattern"
         )
         result = await call_tool("create_circular_pattern", {
             "documentId": "d", "workspaceId": "w", "elementId": "e",
-            "count": 6, "featureIds": ["f1"],
+            "count": 6, "featureIds": ["f1"], "axisEdgeId": "JGC",
         })
         import json as _json
         parsed = _json.loads(result[0].text)
         assert parsed["ok"] is True and parsed["feature_id"] == "cp123"
+        # The native feature must carry the deterministic edge in axisQuery.
+        feature_def = mock_apply.call_args.args[4]
+        axis_param = next(
+            p for p in feature_def["feature"]["parameters"]
+            if p.get("parameterId") == "axisQuery"
+        )
+        assert axis_param["queries"][0]["deterministicIds"] == ["JGC"]
+
+    @pytest.mark.asyncio
+    async def test_create_circular_pattern_world_axis_uses_fs_path(self):
+        apply_result = _mock_apply_result(
+            feature_id="cpfs1", feature_type="circularPatternFS"
+        )
+        with patch(
+            "onshape_mcp.server.custom_feature_manager.apply_featurescript_feature",
+            new=AsyncMock(return_value={
+                "apply_result": apply_result,
+                "fs_element_id": "fse1",
+                "source_microversion_id": "mv1",
+            }),
+        ) as mock_fs:
+            result = await call_tool("create_circular_pattern", {
+                "documentId": "d", "workspaceId": "w", "elementId": "e",
+                "count": 6, "featureIds": ["f1"], "axis": "Z",
+            })
+        import json as _json
+        parsed = _json.loads(result[0].text)
+        assert parsed["ok"] is True and parsed["feature_id"] == "cpfs1"
+        assert parsed["mode"] == "fs_oppattern_world_axis"
+        fs_source = mock_fs.call_args.kwargs["feature_script"]
+        assert "opPattern" in fs_source
+        assert "rotationAround" in fs_source
+        assert 'qCreatedBy(makeId("f1"), EntityType.BODY)' in fs_source
 
     @pytest.mark.asyncio
     @patch("onshape_mcp.server.apply_feature_and_check")

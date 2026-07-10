@@ -66,10 +66,28 @@ def _feature_tree_text(features_raw: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _body_topology_text(entities_out: Dict[str, Any]) -> str:
+_TOPOLOGY_PLANAR_CAP = 10
+_TOPOLOGY_PER_TYPE_CAP = 4
+
+
+def _body_topology_text(
+    entities_out: Dict[str, Any],
+    face_areas: Optional[Dict[str, float]] = None,
+    *,
+    verbose: bool = False,
+) -> str:
+    """Body topology for the describe text block.
+
+    Default mode summarizes: the largest planar faces (the ones worth
+    sketching on, ranked by the FS area probe) plus a few representatives
+    per curved-surface type. A 90-face lofted part was emitting 92 lines /
+    ~850 tokens per verification call before this cap. `verbose=True`
+    restores the full per-face dump.
+    """
     bodies = entities_out.get("bodies") or []
     if not bodies:
         return "BODIES: none"
+    areas = face_areas or {}
     lines = [f"BODIES ({len(bodies)}):"]
     for b in bodies:
         faces = b.get("faces") or []
@@ -82,14 +100,42 @@ def _body_topology_text(entities_out: Dict[str, Any]) -> str:
             f"  body[{b['body_index']}] id={b['body_id']} type={b['body_type']} "
             f"faces={len(faces)} ({face_breakdown}) edges={len(edges)}"
         )
-        # Summarize interesting faces: every non-planar + every planar face
-        # that's >10% of total planar area (the "big" ones Claude will want
-        # to pick for sketches).
+        if verbose:
+            for f in faces:
+                lines.append(f"    FACE {f['id']}: {f['description']}")
+            continue
+
+        shown = 0
+        planar = [f for f in faces if f.get("type") == "PLANE"]
+        planar.sort(key=lambda f: areas.get(f.get("id") or "", 0.0), reverse=True)
+        for f in planar[:_TOPOLOGY_PLANAR_CAP]:
+            a = areas.get(f.get("id") or "")
+            area_txt = f" / area {a*1e6:.1f} mm^2" if isinstance(a, (int, float)) else ""
+            lines.append(f"    FACE {f['id']}: {f['description']}{area_txt}")
+            shown += 1
+
+        by_type: Dict[str, List[Dict[str, Any]]] = {}
         for f in faces:
-            if f.get("type") == "PLANE":
+            t = f.get("type", "?")
+            if t == "PLANE":
+                continue
+            by_type.setdefault(t, []).append(f)
+        for t, group in sorted(by_type.items()):
+            group.sort(key=lambda f: areas.get(f.get("id") or "", 0.0), reverse=True)
+            for f in group[:_TOPOLOGY_PER_TYPE_CAP]:
                 lines.append(f"    FACE {f['id']}: {f['description']}")
-            else:
-                lines.append(f"    FACE {f['id']}: {f['description']}")
+                shown += 1
+            if len(group) > _TOPOLOGY_PER_TYPE_CAP:
+                rest_ids = ", ".join(f.get("id") or "?" for f in group[_TOPOLOGY_PER_TYPE_CAP:_TOPOLOGY_PER_TYPE_CAP+12])
+                more = len(group) - _TOPOLOGY_PER_TYPE_CAP
+                lines.append(f"    ... +{more} more {t.lower()} faces (ids: {rest_ids}{', ...' if more > 12 else ''})")
+
+        omitted_planar = len(planar) - min(len(planar), _TOPOLOGY_PLANAR_CAP)
+        if omitted_planar > 0:
+            lines.append(
+                f"    ... +{omitted_planar} smaller planar faces omitted "
+                "(list_entities for the full set, or describe with verboseTopology=true)"
+            )
     return "\n".join(lines)
 
 
@@ -258,6 +304,28 @@ function(context is Context, queries) {
 }
 """.strip()
 
+# Bbox + per-face areas in ONE eval. Every /featurescript POST forces a
+# part-studio regen, so two separate probes pay the regen tax twice — on
+# FS-feature-heavy parts that's seconds per describe call. The map nests the
+# bbox under "__bbox__" (illegal as a face id) alongside face-id keys.
+_PHYSICAL_PROBE_FS = """
+function(context is Context, queries) {
+    var out = {};
+    try {
+        out["__bbox__"] = evBox3d(context, {"topology": qAllModifiableSolidBodies()});
+    } catch (e) {
+    }
+    var faces = evaluateQuery(context, qOwnedByBody(qAllNonMeshSolidBodies(), EntityType.FACE));
+    for (var f in faces) {
+        try {
+            out[transientQueriesToStrings(f)] = evArea(context, {"entities": f});
+        } catch (e) {
+        }
+    }
+    return out;
+}
+""".strip()
+
 
 def _parse_fs_area_map(fs_response: Dict[str, Any]) -> Dict[str, float]:
     """Pull face_id -> area-in-m^2 from an FSValueMap response."""
@@ -334,8 +402,9 @@ class DescribeManager:
         element_id: str,
         *,
         views: Optional[List[str]] = None,
-        render_width: int = 1200,
-        render_height: int = 800,
+        render_width: int = 1024,
+        render_height: int = 680,
+        verbose_topology: bool = False,
     ) -> PartStudioSnapshot:
         """Snapshot the current design state.
 
@@ -343,16 +412,19 @@ class DescribeManager:
         bbox, massproperties, multi-view render), then assembles both
         representations. ~1-2s total even for complex parts.
         """
-        views = list(views) if views else ["iso", "top", "front", "right"]
+        views = list(views) if views else ["iso", "top", "front"]
 
         features_task = asyncio.create_task(
             self.partstudio.get_features(document_id, workspace_id, element_id)
         )
+        # include_frames=False: the evFaceTangentPlane probe forces its own
+        # regen and dominated describe wall time (~6s on a 90-face part).
+        # The verification summary only needs counts/descriptions; callers
+        # picking faces to sketch on use list_entities directly.
         entities_task = asyncio.create_task(
-            self.entities.list_entities(document_id, workspace_id, element_id)
-        )
-        bbox_task = asyncio.create_task(
-            self.featurescript.get_bounding_box(document_id, workspace_id, element_id)
+            self.entities.list_entities(
+                document_id, workspace_id, element_id, include_frames=False
+            )
         )
         mass_task = asyncio.create_task(
             self._mass_props_safe(document_id, workspace_id, element_id)
@@ -363,16 +435,15 @@ class DescribeManager:
                 views=views, width=render_width, height=render_height,
             )
         )
-        # Face-area probe rides alongside the other independent reads; FS eval
-        # is cheap (~50ms) and gives us min/max face area for the physical
-        # summary. Best-effort: failure produces an empty map and the section
-        # reports "(FS probe unavailable)".
-        face_areas_task = asyncio.create_task(
-            self._fetch_face_areas(document_id, workspace_id, element_id)
+        # Single FS probe for bbox + face areas (one regen instead of two).
+        # Best-effort: failure produces empty results and the summary reports
+        # "(FS probe unavailable)".
+        probe_task = asyncio.create_task(
+            self._fetch_physical_probe(document_id, workspace_id, element_id)
         )
 
-        features_raw, entities_out, bbox_raw, mass_raw, rendered, face_areas = await asyncio.gather(
-            features_task, entities_task, bbox_task, mass_task, render_task, face_areas_task,
+        features_raw, entities_out, mass_raw, rendered, probe_out = await asyncio.gather(
+            features_task, entities_task, mass_task, render_task, probe_task,
             return_exceptions=True,
         )
 
@@ -384,16 +455,15 @@ class DescribeManager:
 
         features_raw = _safe(features_raw, "features") or {}
         entities_out = _safe(entities_out, "entities") or {"bodies": []}
-        bbox_raw = _safe(bbox_raw, "bbox") or {}
         mass_raw = _safe(mass_raw, "mass_properties") or {}
         rendered = _safe(rendered, "render") or []
-        face_areas = _safe(face_areas, "face_areas") or {}
+        probe_out = _safe(probe_out, "physical_probe") or (None, {})
 
-        bbox = _parse_bbox_response(bbox_raw)
+        bbox, face_areas = probe_out
 
         sections = [
             _feature_tree_text(features_raw),
-            _body_topology_text(entities_out),
+            _body_topology_text(entities_out, face_areas, verbose=verbose_topology),
             _physical_summary_text(entities_out, bbox, mass_raw, face_areas),
             _bbox_text(bbox),
             _mass_props_text(mass_raw),
@@ -433,6 +503,60 @@ class DescribeManager:
             logger.debug(f"face-area FS probe failed: {e}")
             return {}
         return _parse_fs_area_map(resp)
+
+    async def _fetch_physical_probe(
+        self, did: str, wid: str, eid: str
+    ) -> tuple:
+        """One FS eval returning (bbox_or_None, face_areas_map).
+
+        Combines the old bbox + face-areas probes so describe pays the
+        regen tax once. Never raises.
+        """
+        try:
+            resp = await self.featurescript.evaluate(did, wid, eid, _PHYSICAL_PROBE_FS)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"physical FS probe failed: {e}")
+            return (None, {})
+        return _parse_physical_probe(resp)
+
+
+def _parse_physical_probe(
+    fs_response: Dict[str, Any],
+) -> tuple:
+    """Split the combined probe map into (bbox, face_areas).
+
+    The map's "__bbox__" entry carries a Box3d (itself an FS map of
+    minCorner/maxCorner vectors); every other entry is face_id -> evArea
+    ValueWithUnits. Malformed entries are skipped, never fatal.
+    """
+    bbox: Optional[Dict[str, Dict[str, float]]] = None
+    face_areas: Dict[str, float] = {}
+    result = fs_response.get("result") or {}
+    entries = result.get("value") if isinstance(result.get("value"), list) else []
+    for ent in entries:
+        if not isinstance(ent, dict):
+            continue
+        key = (ent.get("key") or {}).get("value")
+        if not isinstance(key, str):
+            continue
+        val = ent.get("value") or {}
+        if key == "__bbox__":
+            corners: Dict[str, Any] = {}
+            for corner_ent in (val.get("value") if isinstance(val, dict) else None) or []:
+                if not isinstance(corner_ent, dict):
+                    continue
+                corner_key = (corner_ent.get("key") or {}).get("value")
+                if corner_key in ("minCorner", "maxCorner"):
+                    corners[corner_key] = corner_ent.get("value")
+            mc = _extract_fs_vector(corners.get("minCorner"))
+            xc = _extract_fs_vector(corners.get("maxCorner"))
+            if mc and xc:
+                bbox = {"minCorner": mc, "maxCorner": xc}
+        else:
+            payload = val.get("value") if isinstance(val, dict) else None
+            if isinstance(payload, (int, float)):
+                face_areas[key] = float(payload)
+    return (bbox, face_areas)
 
 
 def _parse_bbox_response(
