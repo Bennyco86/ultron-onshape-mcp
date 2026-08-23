@@ -10,7 +10,7 @@ tracker:
 Check the README, known limitations, and existing issues. A useful report includes:
 
 - the Ultron commit or release you are using
-- your Claude Code and `uv` versions
+- your MCP client name and version, plus your `uv` version
 - the failing MCP tool and smallest request that reproduces the issue
 - the compact structured response, including warnings and hints
 - what you expected to change in Onshape and what changed instead

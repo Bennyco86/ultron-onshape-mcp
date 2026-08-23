@@ -27,15 +27,16 @@ Measured on a 90-face lofted impeller (the part this fork was tuned against):
   (e.g. `libraryRelationType: "NONE"` rejection) and a `create_revolve`
   deterministic-edge axis option.
 
-Claude Code plugin that lets Claude drive real Onshape CAD: sketches, extrudes,
-fillets, mates, parametric iteration via Variable Studios, custom FeatureScript
-features. Every mutating tool returns a structured truth: what changed, what
-warnings the regenerator raised, and hints for the next move. Multi-view PNG
-renders come back as image content so Claude can actually see the part.
+Ultron is an MCP server that lets agentic coding tools such as Codex and Claude
+Code drive real Onshape CAD: sketches, extrudes, fillets, mates, parametric
+iteration via Variable Studios, and custom FeatureScript features. Every
+mutating tool returns a structured truth: what changed, what warnings the
+regenerator raised, and hints for the next move. Multi-view PNG renders come
+back as image content so the connected agent can inspect the part.
 
-Includes a vision-decomposition skill that walks Claude through reading an
-engineering reference image *before* building. See `RESEARCH.md` for the
-benchmark data behind that workflow.
+The repository also includes a Claude Code plugin and a vision-decomposition
+skill that walks Claude through reading an engineering reference image *before*
+building. See `RESEARCH.md` for the benchmark data behind that workflow.
 
 > "felt dramatically more like writing code than anything I've tried with an LLM CAD tool."
 
@@ -82,6 +83,8 @@ benchmark data behind that workflow.
 
 ## Install
 
+### Claude Code plugin
+
 ```
 /plugin install github:Bennyco86/ultron-onshape-mcp
 ```
@@ -94,21 +97,35 @@ Claude Code will prompt you for:
 Get a key pair at [dev-portal.onshape.com](https://dev-portal.onshape.com/).
 Both values are stored in the OS keychain and never written to disk in plaintext.
 
+### Codex and other MCP-capable clients
+
+Ultron also runs as a standard stdio MCP server. After cloning the repository,
+an MCP-capable client can launch it with:
+
+```text
+uv --directory /path/to/ultron-onshape-mcp run onshape-mcp
+```
+
+Register that command with your client and provide `ONSHAPE_API_KEY` and
+`ONSHAPE_API_SECRET` through the client's secure environment configuration.
+The exact registration screen or command differs between clients.
+
 ### Requirements
 
 - [uv](https://docs.astral.sh/uv/) on your PATH (`brew install uv` or the
   official installer). The plugin launches its MCP server via `uv run`.
-- Claude Code desktop or CLI with plugin support.
+- An MCP-capable agentic coding tool such as Codex or Claude Code. The one-command
+  plugin install requires Claude Code desktop or CLI with plugin support.
 - An Onshape account.
 
 ## Quick start
 
-Once installed, restart Claude Code and try:
+Once connected through your MCP client, try:
 
 > "Create a new Onshape document, add a Part Studio, and build me a
 >  60×40×8 mm mounting plate with four ø4 mm holes 6 mm in from the corners."
 
-Claude will render the result, show you the bbox delta, and surface any
+The agent will render the result, show you the bbox delta, and surface any
 regen warnings. If it takes a wrong direction on an extrude, the
 `BOOLEAN_SUBTRACT_NO_OP` hint will kick in and it'll self-correct.
 
