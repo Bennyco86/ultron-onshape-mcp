@@ -83,7 +83,7 @@ benchmark data behind that workflow.
 ## Install
 
 ```
-/plugin install github:ReshefElisha/jarvis-onshape-mcp
+/plugin install github:Bennyco86/ultron-onshape-mcp
 ```
 
 Claude Code will prompt you for:
@@ -186,8 +186,8 @@ docs to read.
 ## Development
 
 ```
-git clone https://github.com/ReshefElisha/jarvis-onshape-mcp
-cd jarvis-onshape-mcp
+git clone https://github.com/Bennyco86/ultron-onshape-mcp
+cd ultron-onshape-mcp
 uv sync
 export ONSHAPE_API_KEY=...
 export ONSHAPE_API_SECRET=...

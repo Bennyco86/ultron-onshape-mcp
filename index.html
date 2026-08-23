@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Ultron Onshape MCP is an open-source, performance-focused toolkit for creating, inspecting, rendering, and refining parametric Onshape models with AI.">
+  <title>Ultron Onshape MCP — Cloud CAD with AI</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body id="top">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="Ultron Onshape MCP home">
+      <span class="brand-mark" aria-hidden="true">ON</span>
+      <span><strong>Ultron</strong><small>Onshape MCP · Aotearoa Labs</small></span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="#loop">Workflow</a>
+      <a href="#tools">Tools</a>
+      <a href="#setup">Setup</a>
+      <a href="#support">Support</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap">
+      <div class="hero-copy">
+        <p class="eyebrow">Cloud CAD MCP · Open source</p>
+        <h1>Build, inspect, and refine <em>Onshape</em> with AI.</h1>
+        <p class="lede">Ultron connects Claude Code to real Onshape documents, combining parametric modelling with structured results, multi-view rendering, and a verify-after-every-change workflow.</p>
+        <div class="hero-actions">
+          <a class="button" href="https://github.com/Bennyco86/ultron-onshape-mcp">View the project on GitHub</a>
+          <a class="button button-secondary" href="#setup">See what you need</a>
+        </div>
+        <div class="hero-facts" aria-label="Project summary">
+          <span><b>≈60</b> tools</span>
+          <span><b>MIT</b> licence</span>
+          <span><b>Cloud</b> execution</span>
+        </div>
+      </div>
+
+      <figure class="model-stage">
+        <div class="stage-bar"><span>PART STUDIO / ROOK</span><i>VERIFIED</i></div>
+        <div class="axis axis-x" aria-hidden="true"></div>
+        <div class="axis axis-y" aria-hidden="true"></div>
+        <img src="assets/ultron-rook.png" alt="Front, isometric, and top views of a chess rook created through the Ultron Onshape MCP workflow">
+        <div class="view-chip">ISO</div>
+        <figcaption><b>The model is the evidence.</b><span>Three verified views of the finished rook.</span></figcaption>
+      </figure>
+    </section>
+
+    <section class="loop" id="loop">
+      <div class="wrap">
+        <div class="section-heading">
+          <p class="eyebrow">A tighter CAD loop</p>
+          <h2>Every modelling step should prove what changed.</h2>
+        </div>
+        <ol class="loop-grid">
+          <li><span>01</span><h3>Describe</h3><p>Start from a written brief, dimensions, or a reference image.</p></li>
+          <li><span>02</span><h3>Build</h3><p>Create sketches and parametric features in the real Onshape document.</p></li>
+          <li><span>03</span><h3>Read the truth</h3><p>Structured mutation results expose changes, warnings, and regeneration failures.</p></li>
+          <li><span>04</span><h3>See and correct</h3><p>Render multiple views, compare geometry, and refine the next operation.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="tools wrap" id="tools">
+      <div class="section-heading dark-heading">
+        <p class="eyebrow">Roughly 60 tools</p>
+        <h2>More than a primitive-by-primitive builder.</h2>
+      </div>
+      <div class="tool-grid">
+        <article class="tool-wide"><span>PARAMETRIC CAD</span><h3>Sketches, extrudes, revolves, booleans, fillets, chamfers, patterns, and first-class Variable Studios.</h3><p>Build editable geometry and change named dimensions without starting again.</p></article>
+        <article><span>VISION</span><h3>Multi-view rendering</h3><p>Return front, top, right, and isometric views so the AI can inspect its work.</p></article>
+        <article><span>REFERENCE</span><h3>Image comparison</h3><p>Load a drawing or photo, crop into features, and compare it with the current model.</p></article>
+        <article><span>ASSEMBLY</span><h3>Mates and interference</h3><p>Place instances, create supported mates, align components, and check bounding boxes.</p></article>
+        <article><span>ESCAPE HATCH</span><h3>FeatureScript</h3><p>Use custom features when the normal modelling surface is not expressive enough.</p></article>
+        <article><span>OUTPUT</span><h3>Measure and export</h3><p>Inspect entities and mass properties, then export common CAD and mesh formats.</p></article>
+        <article><span>FEEDBACK</span><h3>Geometric diffs and hints</h3><p>See bounding-box, part-count, and mass changes with recovery hints for known failures.</p></article>
+      </div>
+    </section>
+
+    <section class="setup" id="setup">
+      <div class="wrap setup-grid">
+        <div>
+          <p class="eyebrow">Before you connect</p>
+          <h2>Four pieces, one cloud workflow.</h2>
+          <p>Ultron uses your Onshape account and API credentials to work with documents you choose. Credentials should stay in the operating-system keychain and never appear in a public issue.</p>
+          <a class="text-link" href="README.md">Open the complete setup guide →</a>
+        </div>
+        <ol>
+          <li><span>1</span><div><strong>Onshape account</strong><p>Access to the documents you want to use.</p></div></li>
+          <li><span>2</span><div><strong>API key and secret</strong><p>A developer-portal key pair with appropriate access.</p></div></li>
+          <li><span>3</span><div><strong>Claude Code</strong><p>Desktop or CLI with plugin support.</p></div></li>
+          <li><span>4</span><div><strong>uv</strong><p>The Python project and MCP server runtime.</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="support" id="support">
+      <div class="wrap support-grid">
+        <div>
+          <p class="eyebrow">Support and development</p>
+          <h2>Share the failure—not your secret key.</h2>
+          <p>For a useful report, include the failing tool, compact response, expected result, and a safe document or minimal reproduction. Remove API credentials and private document details first.</p>
+        </div>
+        <div class="support-actions">
+          <a class="button" href="https://github.com/Bennyco86/ultron-onshape-mcp/issues">Open a GitHub issue</a>
+          <a href="SUPPORT.md">Read the support checklist →</a>
+          <a href="README.md">Read project documentation →</a>
+        </div>
+      </div>
+    </section>
+
+    <aside class="legal-note wrap">
+      <strong>Independent project.</strong>
+      <p>Ultron Onshape MCP is not affiliated with or endorsed by Onshape or PTC. Onshape is a trademark of PTC Inc.</p>
+    </aside>
+  </main>
+
+  <footer class="wrap">
+    <p>Ultron Onshape MCP <span aria-hidden="true">/</span> Aotearoa Labs</p>
+    <div>
+      <a href="https://aotearoa-labs.netlify.app/software/ultron-onshape-mcp/">Aotearoa Labs</a>
+      <a href="README.md">Documentation</a>
+      <a href="LICENSE">Licence</a>
+      <a href="SUPPORT.md">Support</a>
+    </div>
+  </footer>
+</body>
+</html>
